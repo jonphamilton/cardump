@@ -1,3 +1,7 @@
+// Originial credit goes to https://github.com/nebulous/infinitude/tree/master/contrib/cardump
+// Any bad code though is my own
+
+
 #include <termios.h>
 #include <unistd.h>
 #include <stdlib.h>
