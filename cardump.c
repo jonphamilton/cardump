@@ -5,6 +5,8 @@
 #include <inttypes.h>
 #include <string.h>
 #include <time.h>
+#include<sys/socket.h>
+#include<arpa/inet.h>   //inet_addr
 
 #include "buffy.h"
 #include "crc.h"
@@ -17,6 +19,7 @@ int tty_reset(void);
 void tty_raw(void);
 int screenio(void);
 void fatal(char *mess);
+
 
 static struct termios orig_termios;  /* TERMinal I/O Structure */
 static int ttyfd = STDIN_FILENO;     /* STDIN_FILENO is 0 by default */
@@ -88,6 +91,37 @@ typedef struct {
 
 #pragma pack(pop)
 
+void send_socket(char message[])
+{
+        int socket_desc;
+        struct sockaddr_in server;
+
+        //Create socket
+        socket_desc = socket(AF_INET , SOCK_STREAM , 0);
+        if (socket_desc == -1)
+        {
+                printf("Could not create socket");
+        }
+
+
+        server.sin_family = AF_INET;
+        server.sin_addr.s_addr = inet_addr("192.168.0.23");
+        server.sin_port = htons( 2003 );
+
+        if (connect(socket_desc , (struct sockaddr *)&server , sizeof(server)) < 0)
+        {
+                puts("connect error");
+        }
+
+        puts("Connected");
+        //Send some data
+        if( send(socket_desc , message , strlen(message) , 0) < 0)
+        {
+                puts("Send failed");
+        }
+        puts("Data Send\n");
+        close(socket_desc);
+}
 
 int screenio(void) {
 	int bytes;
@@ -154,26 +188,23 @@ int screenio(void) {
 		         
                          // GET BLOWER RPM
                          if ( frame.payload[1] == 0x03 && frame.payload[2] == 0x06) { 
-			 //for (int i=0;i<frame.len;i++) fprintf(stderr, "%02x ", frame.payload[i]);
-			 //fprintf(stderr, "\n");
                          int16_t rpm = (frame.payload[4]<<8) | frame.payload[7];
-                         fprintf(stdout, "CC.Furnace.BlowerRPM %i ", rpm);
-                         fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+                         char message[256] = "CC.V2.inside.Furnace.BlowerRPM " ;
+                         sprintf(message, "%s %d %d \n", message, rpm, (unsigned long)time(NULL)); 
+                         fprintf(stdout, message);
+                         send_socket(message); 
                          }
 
                          // GET BLOWER CFM
                          if ( frame.payload[1] == 0x03 && frame.payload[2] == 0x16) {
-                         //for (int i=0;i<frame.len;i++) fprintf(stderr, "%02x ", frame.payload[i]);
-                         //fprintf(stderr, "\n");
                          int16_t cfm = (frame.payload[7]<<8) | frame.payload[10];
                          fprintf(stdout, "CC.Furnace.BlowerCFM %i ", cfm);
                          fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
                          }
-
-
                          break;
 
                          case 0x20 :
+                         //for (int i=0;i<frame.len;i++) fprintf(stdout, "%02x ", frame[i]);
                          thermostat++; 
                          break;
 
@@ -185,12 +216,13 @@ int screenio(void) {
 				if (frame.src.type == 0x50 && frame.payload[1] == 0x3E && frame.payload[2] == 0x01) {
 					int16_t oat = (frame.payload[3]<<8) | frame.payload[4];
 					int16_t t2 = (frame.payload[5]<<8) | frame.payload[6];
-				       // printf(frame.payload);	
-                                        fprintf(stdout, "CC.HeatPump0.outsidetemp %d ", oat/16, oat);
-				        fprintf(stdout, "%lu\n", (unsigned long)time(NULL)); 	
+                                        char tempmessage[256] = "CC.V2.inside.HeatPump0.outsidetemp ";
+                                        sprintf(tempmessage, "%s %d %d \n", tempmessage, oat/16, (unsigned long)time(NULL)); 
+                                        send_socket(tempmessage);
+                                        fprintf(stdout, tempmessage);
                                         fprintf(stdout, "CC.HeatPump0.outsidecoil %d ", t2/16, t2);
                                         fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
-                                        fflush(stdout); 
+                                        fflush(stdout);
                                }
 			}
 
@@ -200,6 +232,7 @@ int screenio(void) {
 			shifts++;
 			bufshift(&framebuf, 1);
 		}
+
 	}
 
 fprintf(stdout, "CC.Thermostat.srcv2 %i ", thermostat);
