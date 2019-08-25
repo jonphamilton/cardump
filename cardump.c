@@ -1,7 +1,3 @@
-// Originial credit goes to https://github.com/nebulous/infinitude/tree/master/contrib/cardump
-// Any bad code though is my own
-
-
 #include <termios.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -37,8 +33,11 @@ int main(int argc, char **argv) {
 			fprintf(stderr,"Not a tty. Reading from file...\n");
 	}
 
+ for (;;) { 
     screenio();     /* run application code */
+ }
     return 0;       /* tty_atexit will restore terminal */
+
 }
 
 
@@ -101,12 +100,20 @@ int screenio(void) {
 	char buffer[32]; //serial reads tend to have less than 32 bytes
 
 	uint8_t tries = 0;
-	printf("Time\tFrom\tTo\tType\tLength\tHex Content\n");
 	int shifts = 0;
 	int syncs = 0;
 
-	for (;;) {
-		bytes = read(ttyfd, buffer, 32);
+        long curtime = (unsigned long)time(NULL); 
+        long endtime = curtime + 5 ;
+
+        int heatpump = 0;
+        int furnace = 0; 
+        int thermostat = 0;  
+        
+
+	while ( endtime > curtime ) {
+                curtime = (unsigned long)time(NULL);
+         	bytes = read(ttyfd, buffer, 32);
 		if (bytes < 0) fatal("Read error");
 		if (bytes == 0) { tries+=1; } else { tries = 0; }
 		if (tries>9) fatal("Not trying again");
@@ -135,45 +142,58 @@ int screenio(void) {
 			}
 			memcpy(&frame, framebuf.data, framelen);
 			frame.crc=framebuf.data[framelen-2]<<8 | framebuf.data[framelen-1];
+                       
+                        
+                        switch(frame.src.type) {
+                         case 0x50 :
+                         heatpump++;   
+                         break;
+                     
+                         case 0x40 :
+                         furnace++ ;
+		         
+                         // GET BLOWER RPM
+                         if ( frame.payload[1] == 0x03 && frame.payload[2] == 0x06) { 
+			 //for (int i=0;i<frame.len;i++) fprintf(stderr, "%02x ", frame.payload[i]);
+			 //fprintf(stderr, "\n");
+                         int16_t rpm = (frame.payload[4]<<8) | frame.payload[7];
+                         fprintf(stdout, "CC.Furnace.BlowerRPM %i ", rpm);
+                         fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+                         }
 
-			if (READ_REQ == frame.type) {
-				fprintf(stderr, "--------------READ from %x ------------\n", frame.dst.type);
-				caread req;
-				memcpy(&req, frame.payload, 3);
-				fprintf(stderr,"Request for table %d, row %d\n", req.reg.table, req.reg.row);
-			}
+                         // GET BLOWER CFM
+                         if ( frame.payload[1] == 0x03 && frame.payload[2] == 0x16) {
+                         //for (int i=0;i<frame.len;i++) fprintf(stderr, "%02x ", frame.payload[i]);
+                         //fprintf(stderr, "\n");
+                         int16_t cfm = (frame.payload[7]<<8) | frame.payload[10];
+                         fprintf(stdout, "CC.Furnace.BlowerCFM %i ", cfm);
+                         fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+                         }
 
-			if (WRITE_REQ == frame.type) {
-				fprintf(stderr, "--------------WRITE to %x ------------\n", frame.dst.type);
-				carwrite req;
-				memcpy(&req, frame.payload, 256);
-				fprintf(stderr,"Write to table %d, row %d\n", req.reg.table, req.reg.row);
-				for (int i=0;i<frame.len;i++) fprintf(stderr, "%02x ", req.payload[i]);
-				fprintf(stderr, "\n");
-			}
+
+                         break;
+
+                         case 0x20 :
+                         thermostat++; 
+                         break;
+
+                       }
+
 
 			if (REPLY == frame.type) {
 				//Example of a known data point.
 				if (frame.src.type == 0x50 && frame.payload[1] == 0x3E && frame.payload[2] == 0x01) {
 					int16_t oat = (frame.payload[3]<<8) | frame.payload[4];
 					int16_t t2 = (frame.payload[5]<<8) | frame.payload[6];
-					fprintf(stderr, "Outside Temp: %df %04x\n", oat/16, oat);
-					fprintf(stderr, "Outside Coil: %df %04x\n", t2/16, t2);
-				}
+				       // printf(frame.payload);	
+                                        fprintf(stdout, "CC.HeatPump0.outsidetemp %d ", oat/16, oat);
+				        fprintf(stdout, "%lu\n", (unsigned long)time(NULL)); 	
+                                        fprintf(stdout, "CC.HeatPump0.outsidecoil %d ", t2/16, t2);
+                                        fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+                                        fflush(stdout); 
+                               }
 			}
 
-			if (frame.payload[1] == 0x02) {
-				if (frame.payload[2] == 0x02) { //Time Frame
-					fprintf(stderr,"Time is %d:%d\n", frame.payload[3], frame.payload[4]);
-				}
-				if (frame.payload[2] == 0x03) { //Date Frame
-					fprintf(stderr,"Date is %d-%d-%d\n", frame.payload[5]+2000, frame.payload[4], frame.payload[3]);
-				}
-			}
-
-			printf("%d\t%x\t%x\t%02x\t%d\t", (int)time(NULL),frame.src.type, frame.dst.type, frame.type, frame.len);
-			for (int i=0;i<frame.len;i++) printf("%02x ", frame.payload[i]);
-			printf("\n");
 
 			bufshift(&framebuf, framelen);
 		} else {
@@ -181,6 +201,14 @@ int screenio(void) {
 			bufshift(&framebuf, 1);
 		}
 	}
+
+fprintf(stdout, "CC.Thermostat.srcv2 %i ", thermostat);
+fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+fprintf(stdout, "CC.Furnace.srcv2 %i ", furnace);
+fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+fprintf(stdout, "CC.HeatPump0.srcv2 %i ", heatpump);
+fprintf(stdout, "%lu\n", (unsigned long)time(NULL));
+
 }
 
 void fatal(char *message) {
@@ -191,7 +219,6 @@ void fatal(char *message) {
 /* exit handler for tty reset */
 void tty_atexit(void)  /* NOTE: If the program terminates due to a signal   */
 {                      /* this code will not run.  This is for exit()'s     */
-	printf("Exit. Reset tty to initial settings.\n");
 	tty_reset();        /* only.  For resetting the terminal after a signal, */
 }                      /* a signal handler which calls tty_reset is needed. */
 
